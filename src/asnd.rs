@@ -4,7 +4,7 @@
 
 use crate::{ffi, OgcError, Result};
 use alloc::format;
-use core::{mem, time::Duration};
+use core::time::Duration;
 
 macro_rules! if_not {
     ($valid:ident => $error_output:expr, $var:ident $(,)*) => {
@@ -160,7 +160,11 @@ impl Asnd {
     /// Pauses if true and resumes if false.
     pub fn pause(should_pause: bool) {
         unsafe {
-            ffi::ASND_Pause(should_pause as i32);
+            let pause = match should_pause {
+                true => 1,
+                false => 0,
+            };
+            ffi::ASND_Pause(pause);
         }
     }
 
@@ -207,44 +211,74 @@ impl Asnd {
     /// `Asnd::status_voice()` to test status. The voices are played in 16-bit stereo,
     /// regardless of source format. The buffer MUST be aligned and padded to 32 bytes.
     pub fn set_voice(options: VoiceOptions, sound_buffer: &mut [u8]) -> Result<()> {
-        Self::validate_buffer(sound_buffer);
-
-        let err = unsafe {
-            ffi::ASND_SetVoice(
-                options.voice as i32,
-                options.format.as_i32(),
-                options.pitch as i32,
-                options.delay as i32,
-                sound_buffer.as_mut_ptr() as *mut _,
-                sound_buffer.len() as i32,
-                options.volume_left as i32,
-                options.volume_right as i32,
-                options.callback,
-            )
-        };
-
-        if_not!(SND_OK => "Asnd::set_voice() failed with error {}!", err)
+        if Self::validate_buffer(sound_buffer) {
+            let err = unsafe {
+                ffi::ASND_SetVoice(
+                    options.voice as i32,
+                    options.format.as_i32(),
+                    options.pitch as i32,
+                    options.delay as i32,
+                    sound_buffer.as_mut_ptr() as *mut _,
+                    sound_buffer.len() as i32,
+                    options.volume_left as i32,
+                    options.volume_right as i32,
+                    options.callback,
+                )
+            };
+            if_not!(SND_OK => "Asnd::set_voice() failed with error {}!", err)
+        } else {
+            let mut buffer = crate::utils::alloc_aligned_buffer(sound_buffer);
+            let err = unsafe {
+                ffi::ASND_SetVoice(
+                    options.voice as i32,
+                    options.format.as_i32(),
+                    options.pitch as i32,
+                    options.delay as i32,
+                    buffer.as_mut_ptr() as *mut _,
+                    buffer.len() as i32,
+                    options.volume_left as i32,
+                    options.volume_right as i32,
+                    options.callback,
+                )
+            };
+            if_not!(SND_OK => "Asnd::set_voice() failed with error {}!", err)
+        }
     }
 
     /// Sets a PCM voice to play infinitely. See `Asnd::set_voice()` as it is largely identical.
     /// The buffer MUST be aligned and padded to 32 bytes.
     pub fn set_infinite_voice(options: VoiceOptions, sound_buffer: &mut [u8]) -> Result<()> {
-        Self::validate_buffer(sound_buffer);
+        if Self::validate_buffer(sound_buffer) {
+            let err = unsafe {
+                ffi::ASND_SetInfiniteVoice(
+                    options.voice as i32,
+                    options.format.as_i32(),
+                    options.pitch as i32,
+                    options.delay as i32,
+                    sound_buffer.as_mut_ptr() as *mut _,
+                    sound_buffer.len() as i32,
+                    options.volume_left as i32,
+                    options.volume_right as i32,
+                )
+            };
 
-        let err = unsafe {
-            ffi::ASND_SetInfiniteVoice(
-                options.voice as i32,
-                options.format.as_i32(),
-                options.pitch as i32,
-                options.delay as i32,
-                sound_buffer.as_mut_ptr() as *mut _,
-                sound_buffer.len() as i32,
-                options.volume_left as i32,
-                options.volume_right as i32,
-            )
-        };
-
-        if_not!(SND_OK => "Asnd::set_infinite_voice() failed with error {}", err)
+            if_not!(SND_OK => "Asnd::set_infinite_voice() failed with error {}", err)
+        } else {
+            let mut buffer = crate::utils::alloc_aligned_buffer(sound_buffer);
+            let err = unsafe {
+                ffi::ASND_SetInfiniteVoice(
+                    options.voice as i32,
+                    options.format.as_i32(),
+                    options.pitch as i32,
+                    options.delay as i32,
+                    buffer.as_mut_ptr() as *mut _,
+                    buffer.len() as i32,
+                    options.volume_left as i32,
+                    options.volume_right as i32,
+                )
+            };
+            if_not!(SND_OK => "Asnd::set_infinite_voice() failed with error {}", err)
+        }
     }
 
     /// Adds a PCM voice to play from the second buffer. Sound buffer must be 32-byte
@@ -253,17 +287,27 @@ impl Asnd {
     /// The buffer MUST be aligned and padded to 32 bytes.
     fn add_voice(voice: u32, sound_buffer: &mut [u8]) -> Result<()> {
         assert!(voice < 16, "Voice index {} is >= 16", voice);
-        Self::validate_buffer(sound_buffer);
+        if Self::validate_buffer(sound_buffer) {
+            let err = unsafe {
+                ffi::ASND_AddVoice(
+                    voice as i32,
+                    sound_buffer.as_mut_ptr() as *mut _,
+                    sound_buffer.len() as i32,
+                )
+            };
 
-        let err = unsafe {
-            ffi::ASND_AddVoice(
-                voice as i32,
-                sound_buffer.as_mut_ptr() as *mut _,
-                sound_buffer.len() as i32,
-            )
-        };
-
-        if_not!(SND_OK => "Asnd::add_voice() failed with error {}", err)
+            if_not!(SND_OK => "Asnd::add_voice() failed with error {}", err)
+        } else {
+            let mut buffer = crate::utils::alloc_aligned_buffer(sound_buffer);
+            let err = unsafe {
+                ffi::ASND_AddVoice(
+                    voice as i32,
+                    buffer.as_mut_ptr() as *mut _,
+                    buffer.len() as i32,
+                )
+            };
+            if_not!(SND_OK => "Asnd::add_voice() failed with error {}", err)
+        }
     }
 
     /// Stops the selected voice. If the voice is used in song mode, you need to
@@ -360,17 +404,8 @@ impl Asnd {
         unsafe { Duration::from_nanos(ffi::ASND_GetDSP_ProcessTime().into()) }
     }
 
-    fn validate_buffer(sound_buffer: &mut [u8]) {
-        assert_eq!(
-            32,
-            mem::align_of_val(sound_buffer),
-            "Data is not aligned correctly."
-        );
-        assert_eq!(
-            0,
-            sound_buffer.len() % 32,
-            "Data length is not a multiple of 32."
-        );
+    fn validate_buffer(sound_buffer: &mut [u8]) -> bool {
+        sound_buffer.as_ptr().align_offset(32) == 0 && sound_buffer.len() % 32 == 0
     }
 }
 
